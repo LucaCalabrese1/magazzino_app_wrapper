@@ -18,6 +18,7 @@ const config: CapacitorConfig = {
   android: {
     allowMixedContent: false,
   },
+  // Android 13+: aggiungi POST_NOTIFICATIONS in android/app/src/main/AndroidManifest.xml (vedi ANDROID_PUSH.md)
 };
 
 export default config;

@@ -62,4 +62,5 @@ npx cap sync android
 ## Aggiornare l'app sugli utenti
 
 - **UI e logica:** deploy sul server → utenti vedono subito le novità (nessun nuovo APK).
-- **Nuovo APK:** solo se cambi icona, permessi, plugin nativi o URL in `capacitor.config.ts`.
+- **Notifiche push:** dopo login chiede permesso lato server (`push.js`). Se non compare su Android 13+, vedi **`ANDROID_PUSH.md`** e ricompila APK con `POST_NOTIFICATIONS`.
+- **Nuovo APK:** icona, permessi manifest, plugin nativi o URL in `capacitor.config.ts`.
