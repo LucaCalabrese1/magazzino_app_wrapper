@@ -1,50 +1,131 @@
-# Notifiche push su Android (Capacitor wrapper remoto)
+# Push Notifications — APK Capacitor (FCM)
 
-L'APK carica il sito `https://www.mondocartaordini.it/magazzino-app/`.
-Le push usano **Web Push + service worker** sul server (non FCM nativo).
+Il sistema usa **Firebase Cloud Messaging (FCM)** tramite il plugin
+`@capacitor/push-notifications` per notifiche native su Android.
 
-## Cosa fa il server (già deployato)
+---
 
-1. Dopo il **login** → redirect con `?registra-push=1` → modale «Consenti notifiche»
-2. Registra il dispositivo in `magazzinieri_push_subscriptions`
-3. Test dal PC: `GET /magazzino-app/push/test?k=CHIAVE` (chiave in `app/config.ini`)
+## 1. Crea progetto Firebase
 
-## Permesso Android 13+ (obbligatorio per nuovo APK)
+1. Vai su <https://console.firebase.google.com/>
+2. **Aggiungi progetto** → nome es. "intime-magazzino"
+3. Nella home del progetto → **Aggiungi app Android**
+   - Package: `it.intime.magazzino`
+   - Nickname: Magazzino
+4. Scarica `google-services.json`
+5. Copialo in `android/app/google-services.json`
 
-Dopo `npx cap add android`, modifica:
+---
 
-`android/app/src/main/AndroidManifest.xml`
+## 2. Service Account (per il backend PHP)
 
-Aggiungi **prima** di `<application>`:
+1. Firebase Console → Impostazioni progetto → **Account di servizio**
+2. **Genera nuova chiave privata** → scarica il JSON
+3. Caricalo sul server in `/var/www/ordini/app/firebase-service-account.json`
+   (non committare mai questo file nel repo)
+4. Modifica `config.ini`:
+   ```ini
+   fcm.service_account_json="/var/www/ordini/app/firebase-service-account.json"
+   fcm.project_id="intime-magazzino-XXXXX"
+   ```
+   L'ID progetto lo trovi in Firebase Console → impostazioni → *Project ID*.
 
+---
+
+## 3. Configurazione Android (una volta sola)
+
+### 3a. Fix ProGuard (se ancora non fatto)
+
+In `android/app/build.gradle` riga ~22:
+
+```gradle
+// Sostituisci:
+proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+// Con:
+proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+```
+
+### 3b. Aggiungi plugin Firebase in `android/build.gradle` (root)
+
+```gradle
+buildscript {
+    dependencies {
+        // ...
+        classpath 'com.google.gms:google-services:4.4.2'
+    }
+}
+```
+
+### 3c. Applica plugin e Google Services in `android/app/build.gradle`
+
+```gradle
+apply plugin: 'com.google.gms.google-services'
+```
+
+> Se stai usando Gradle 8+:
+> in `android/app/build.gradle` aggiunge nella sezione plugins:
+> `id 'com.google.gms.google-services'`
+
+### 3d. AndroidManifest.xml già aggiornato
+
+Deve già avere (è stato aggiunto nella sessione precedente):
 ```xml
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-<uses-permission android:name="android.permission.INTERNET" />
 ```
 
-Poi ricompila l'APK:
+---
+
+## 4. Sync e build
+
+```powershell
+npx cap sync android
+```
+
+Poi compila il debug APK da Android Studio oppure:
+```powershell
+cd android
+.\gradlew assembleDebug
+```
+
+APK generato: `android/app/build/outputs/apk/debug/app-debug.apk`
+
+---
+
+## 5. Migration DB (server)
 
 ```bash
-npx cap sync android
-# Android Studio → Build APK
+mysql -u ordini_user -p qiurpult_dbmaster < /var/www/ordini/migrations/create_magazzinieri_fcm_tokens.sql
 ```
 
-Senza `POST_NOTIFICATIONS` il WebView **non** mostra il dialog notifiche su Android 13+.
+---
 
-## Verifica
+## 6. Come funziona il flusso
 
-1. Installa APK aggiornato
-2. Login magazziniere → compare modale notifiche → **Consenti**
-3. Dal PC apri il link di test push
-4. Deve arrivare la notifica anche con app in background
+```
+APK apre app
+  └─ push.js rileva window.Capacitor.isNativePlatform() === true
+       └─ chiama PushNotifications.requestPermissions()
+            └─ utente accetta
+                 └─ PushNotifications.register()
+                      └─ evento "registration" → token FCM
+                           └─ POST /magazzino-app/push/fcm-token  { token: "..." }
+                                └─ server salva in magazzinieri_fcm_tokens
 
-## Se non compare il dialog
+Quando succede un evento (es. nuovo ordine):
+  MagazzinoAppFcm::sendToImpiegato(...)
+    └─ backend genera JWT firmato con service account
+         └─ POST FCM HTTP v1 API
+              └─ Google → dispositivo → notifica nativa
+```
 
-- Controlla Impostazioni Android → App INTIME Magazzino → Notifiche (attive?)
-- Prova `/magazzino-app/push/registra` dopo login
-- Se compare «Service worker non disponibile» → serve nuovo APK con permesso sopra
+---
 
-## FCM / plugin nativo
+## 7. Test
 
-Non usato in questo POC. Il backend è VAPID (`minishlink/web-push`).
-Passare a `@capacitor/push-notifications` + Firebase solo se Web Push nel WebView non funziona.
+Dopo aver installato il nuovo APK e aperto la pagina push/registra:
+
+```
+GET https://TUO_DOMINIO/magazzino-app/push/test?k=CHIAVE_IN_CONFIG_INI
+```
+
+Deve apparire la notifica sul telefono.
